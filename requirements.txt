@@ -1,0 +1,5 @@
+groq
+ddgs
+chromadb
+streamlit
+python-dotenv
