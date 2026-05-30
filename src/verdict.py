@@ -64,26 +64,27 @@ def _parse_verdict_json(text: str) -> dict:
 def generate_verdict(claim: str, evidence: list) -> dict:
     """Analyze evidence and return a structured verdict for a claim."""
     system_prompt = (
-        "You are a fact-checking assistant. Analyze the claim and evidence provided.\n"
-        "You MUST respond with ONLY a valid JSON object, no other text, no markdown, "
-        "no code fences. Use double quotes throughout.\n"
+        "You are a rigorous fact-checking assistant. Your job is to analyze a claim "
+        "against real web evidence and return an accurate, specific verdict.\n"
         "\n"
-        "Rules:\n"
-        "- supporting_points and contradicting_points must be specific factual "
-        "statements drawn from the evidence. Never say 'Evidence 1 mentions' or "
-        "reference evidence by number. Write actual facts.\n"
-        "- Be precise about the verdict. If a claim says 'always' or 'all' or 'never',\n"
-        "  check carefully — sweeping absolutes are usually REFUTED or "
-        "INSUFFICIENT EVIDENCE.\n"
-        "- contradicting_points should never be empty if the claim uses absolute "
-        "language like 'all', 'always', 'never', 'every'.\n"
+        "STRICT RULES:\n"
+        "1. If the claim uses absolute language like 'all', 'always', 'every', 'never', "
+        "'completely', find even ONE counterexample in the evidence — if found, "
+        "verdict must be REFUTED or INSUFFICIENT EVIDENCE, never SUPPORTED.\n"
+        "2. supporting_points and contradicting_points must be specific facts from "
+        "the evidence. NEVER write 'Evidence 1 mentions' or reference by number. "
+        "Write the actual fact itself.\n"
+        "3. contradicting_points must NEVER be empty for absolute claims.\n"
+        "4. If evidence is weak, mixed, or insufficient, choose INSUFFICIENT EVIDENCE "
+        "over SUPPORTED or REFUTED.\n"
+        "5. confidence should be LOW if fewer than 3 strong sources agree.\n"
         "\n"
-        "Return this exact format:\n"
+        "Return ONLY this exact JSON with double quotes, no markdown, no code fences:\n"
         "{\n"
         '  "verdict": "SUPPORTED" or "REFUTED" or "INSUFFICIENT EVIDENCE",\n'
         '  "confidence": "HIGH" or "MEDIUM" or "LOW",\n'
-        '  "summary": "2-3 sentence explanation of the verdict",\n'
-        '  "supporting_points": ["specific fact 1", "specific fact 2"],\n'
+        '  "summary": "2-3 sentences explaining the verdict referencing actual evidence",\n'
+        '  "supporting_points": ["specific fact 1", "specific fact 2", "specific fact 3"],\n'
         '  "contradicting_points": ["specific fact 1", "specific fact 2"]\n'
         "}"
     )

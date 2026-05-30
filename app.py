@@ -1,5 +1,4 @@
 import streamlit as st
-from src.agent import run_pipeline
 
 st.set_page_config(page_title="Claim Verifier", page_icon="🔍", layout="centered")
 
@@ -231,13 +230,50 @@ elif st.session_state.view == "results":
         st.session_state.view = "landing"
         st.session_state.claim = ""
         st.session_state.result = None
+        st.session_state.chat_history = []
         st.rerun()
 
     st.markdown(f"<h3 style='font-family: DM Serif Display, serif; margin-bottom: 1.5rem;'>Verifying: <em style='color:#534AB7'>{st.session_state.claim}</em></h3>", unsafe_allow_html=True)
 
     if st.session_state.result is None:
-        with st.spinner("Researching and analysing..."):
-            st.session_state.result = run_pipeline(st.session_state.claim)
+        progress_container = st.empty()
+
+        with progress_container.container():
+            st.markdown("#### Researching your claim...")
+            step1 = st.status("🔀 Decomposing claim into sub-questions...", expanded=False)
+            step2 = st.status("🌐 Searching the web for evidence...", expanded=False)
+            step3 = st.status("⚖️ Analysing evidence and generating verdict...", expanded=False)
+
+        # Step 1
+        step1.update(state="running")
+        from src.agent import decompose_claim
+        from src.search import search_web
+        from src.verdict import generate_verdict
+
+        sub_questions = decompose_claim(st.session_state.claim)
+        step1.update(label=f"🔀 Decomposed into {len(sub_questions)} sub-questions", state="complete")
+
+        # Step 2
+        step2.update(state="running")
+        all_evidence = []
+        for q in sub_questions:
+            results = search_web(q, max_results=5)
+            all_evidence.extend(results)
+        step2.update(label=f"🌐 Found {len(all_evidence)} pieces of evidence", state="complete")
+
+        # Step 3
+        step3.update(state="running")
+        verdict = generate_verdict(st.session_state.claim, all_evidence[:10])
+        step3.update(label="⚖️ Verdict generated", state="complete")
+
+        st.session_state.result = {
+            "claim": st.session_state.claim,
+            "sub_questions": sub_questions,
+            "evidence": all_evidence,
+            "verdict": verdict
+        }
+
+        progress_container.empty()
 
     result = st.session_state.result
     verdict = result["verdict"]
@@ -273,8 +309,78 @@ elif st.session_state.view == "results":
             st.markdown(f"{i}. {q}")
 
     with st.expander("Sources"):
-        for e in result["evidence"]:
-            st.markdown(f"- [{e['title']}]({e['url']})")
+        from src.credibility import score_evidence
+        scored = score_evidence(result["evidence"])
+        for e in scored:
+            cred = e.get("credibility", {})
+            color = cred.get("color", "⚪")
+            label = cred.get("label", "Unknown")
+            st.markdown(f"{color} [{e['title']}]({e['url']}) — *{label}*")
+
+    st.markdown("---")
+    st.markdown("### 💬 Discuss this verdict")
+    st.markdown("Ask follow-up questions, challenge the verdict, or dig deeper into the evidence.")
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # Display chat history
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Chat input
+    if user_msg := st.chat_input("Ask something about this verdict..."):
+        st.session_state.chat_history.append({"role": "user", "content": user_msg})
+
+        with st.chat_message("user"):
+            st.markdown(user_msg)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                from groq import Groq
+                import os
+                try:
+                    import streamlit as st_inner
+                    api_key = st_inner.secrets["GROQ_API_KEY"]
+                except:
+                    from dotenv import load_dotenv
+                    load_dotenv()
+                    api_key = os.getenv("GROQ_API_KEY")
+
+                client = Groq(api_key=api_key)
+
+                # Build context from the verdict
+                verdict = st.session_state.result["verdict"]
+                context = f"""
+You are a fact-checking assistant. The user has just received this verdict 
+on the claim: "{st.session_state.claim}"
+
+Verdict: {verdict.get('verdict')}
+Confidence: {verdict.get('confidence')}
+Summary: {verdict.get('summary')}
+Supporting points: {verdict.get('supporting_points')}
+Contradicting points: {verdict.get('contradicting_points')}
+
+The user wants to discuss, challenge, or explore this verdict further.
+Be helpful, specific, and reference the evidence where possible.
+If the user challenges the verdict, engage with their argument seriously.
+Keep responses concise — 3-5 sentences max unless more detail is needed.
+"""
+                messages = [{"role": "system", "content": context}]
+                for h in st.session_state.chat_history:
+                    messages.append({"role": h["role"], "content": h["content"]})
+
+                response = client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=messages,
+                    max_tokens=500
+                )
+
+                reply = response.choices[0].message.content
+                st.markdown(reply)
+
+        st.session_state.chat_history.append({"role": "assistant", "content": reply})
 
     st.markdown("""
     <div class="cv-footer">
