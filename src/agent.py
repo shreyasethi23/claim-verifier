@@ -1,118 +1,82 @@
-import ast
-import os
+"""Orchestrator: Planner agent -> Researcher agent (ReAct + ChromaDB) -> Verifier agent.
 
-from groq import Groq
-
+The ORDER of the three agents is a fixed workflow (predictable, cheap);
+the Researcher is the only part where the LLM chooses its own next step.
+"""
 try:
-    from .search import search_web
-    from .verdict import generate_verdict
+    from .evidence_store import EvidenceStore
+    from .llm import FAST_MODEL, chat_json
+    from .researcher import ResearchAgent
+    from .verdict import gather_evidence, generate_verdict
 except ImportError:
-    from search import search_web
-    from verdict import generate_verdict
+    from evidence_store import EvidenceStore
+    from llm import FAST_MODEL, chat_json
+    from researcher import ResearchAgent
+    from verdict import gather_evidence, generate_verdict
 
-try:
-    import streamlit as st
-    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-except:
-    from dotenv import load_dotenv
-    load_dotenv()
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-MODEL = "llama-3.1-8b-instant"
-SYSTEM_PROMPT = (
-    "You are a fact-checking assistant. Given a claim, break it down into "
-    "3-5 specific search queries that would help verify or refute it. "
-    'Return ONLY a Python list of strings, nothing else. '
-    'Example: ["query 1", "query 2", "query 3"]'
+PLANNER_PROMPT = (
+    "You are a fact-checking planner. Break the claim into 3-5 specific, independently searchable "
+    "sub-questions that together would verify or refute it. Include at least one question that looks "
+    "for counter-evidence. Return JSON: {\"sub_questions\": [\"...\", \"...\"]}"
 )
 
-client = Groq(api_key=GROQ_API_KEY)
 
-
-def _parse_query_list(text: str) -> list[str]:
-    """Parse a Python list of strings from the model response."""
-    cleaned = text.strip()
-
-    if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
-
-    parsed = ast.literal_eval(cleaned)
-    if not isinstance(parsed, list):
-        raise ValueError("Response is not a list")
-
-    queries = [str(item).strip() for item in parsed if str(item).strip()]
-    if not queries:
-        raise ValueError("Response list is empty")
-
-    return queries
-
-
-def decompose_claim(claim: str) -> list[str]:
-    """Break a claim into search queries using Groq."""
+def decompose_claim(claim: str, llm=chat_json) -> list[str]:
+    """Planner agent (small fast model: an easy task -> model routing)."""
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": claim},
-            ],
-        )
-        content = response.choices[0].message.content or ""
-        return _parse_query_list(content)
-    except (SyntaxError, ValueError) as e:
-        print(f"Failed to parse response: {e}")
-        return [claim]
+        data = llm([{"role": "system", "content": PLANNER_PROMPT},
+                    {"role": "user", "content": claim}], model=FAST_MODEL)
+        qs = [str(q).strip() for q in data.get("sub_questions", []) if str(q).strip()]
+        return qs[:5] or [claim]
     except Exception as e:
-        print(f"API request failed: {e}")
+        print(f"Planner failed, falling back to the raw claim: {e}")
         return [claim]
 
 
-def run_pipeline(claim: str) -> dict:
-    """Run the full claim verification pipeline."""
+def run_pipeline(claim: str, on_stage=None, on_step=None, embedding_function=None) -> dict:
+    """Run all three agents. on_stage(name) / on_step(trace_entry) let the UI show live progress."""
+    def stage(name):
+        if on_stage:
+            on_stage(name)
+
+    stage("plan")
     sub_questions = decompose_claim(claim)
 
-    all_evidence = []
-    for question in sub_questions:
-        all_evidence.extend(search_web(question))
+    stage("research")
+    store = EvidenceStore(embedding_function=embedding_function)
+    researcher = ResearchAgent(store)
+    research_summary = researcher.run(claim, sub_questions, on_step=on_step)
+
+    stage("verify")
+    evidence = gather_evidence(store, claim, sub_questions)
+    verdict = generate_verdict(claim, evidence)
 
     return {
         "claim": claim,
         "sub_questions": sub_questions,
-        "evidence": all_evidence,
-        "verdict": generate_verdict(claim, all_evidence[:10]),
+        "research_summary": research_summary,
+        "trace": researcher.trace,
+        "evidence": evidence,
+        "sources": store.sources,
+        "verdict": verdict,
     }
 
 
 if __name__ == "__main__":
-    claim = "climate change is fake news"
-    print(f"Running pipeline for: {claim!r}\n")
+    import sys
+    claim = " ".join(sys.argv[1:]) or "Transformers outperform RNNs on all NLP tasks"
+    result = run_pipeline(claim, on_stage=lambda s: print(f"\n== {s.upper()} =="),
+                          on_step=lambda e: print(f"  step {e['step']}: {e['action']} {e['args']}"))
+    v = result["verdict"]
+    print(f"\nVerdict: {v['verdict']} ({v['confidence']})\n{v['summary']}")
+    for p in v["supporting_points"]:
+        print("  +", p["point"], p["sources"])
+    for p in v["contradicting_points"]:
+        print("  -", p["point"], p["sources"])
+    if v.get("citation_issues"):
+        print("Citation issues:", v["citation_issues"])
 
-    result = run_pipeline(claim)
-
-    print("Sub-questions:")
-    for i, question in enumerate(result["sub_questions"], start=1):
-        print(f"  {i}. {question}")
-
-    print(f"\nEvidence ({len(result['evidence'])} results):")
-    for i, item in enumerate(result["evidence"], start=1):
-        print(f"  {i}. {item['title']}")
-        print(f"     {item['url']}")
-
-    verdict = result["verdict"]
-    print("\nVerdict:")
-    print(f"  Status: {verdict.get('verdict', 'UNKNOWN')}")
-    print(f"  Confidence: {verdict.get('confidence', 'UNKNOWN')}")
-    print(f"  Summary: {verdict.get('summary', '')}")
-
-    supporting = verdict.get("supporting_points", [])
-    if supporting:
-        print("\n  Supporting points:")
-        for point in supporting:
-            print(f"    - {point}")
-
-    contradicting = verdict.get("contradicting_points", [])
-    if contradicting:
-        print("\n  Contradicting points:")
-        for point in contradicting:
-            print(f"    - {point}")
+    # ChromaDB's ONNX runtime can abort while shutting down on macOS; exit cleanly after printing.
+    import os
+    sys.stdout.flush()
+    os._exit(0)

@@ -1,3 +1,5 @@
+import html
+
 import streamlit as st
 
 st.set_page_config(page_title="Claim Verifier", page_icon="🔍", layout="centered")
@@ -80,7 +82,7 @@ if st.session_state.view == "landing":
     <div style="text-align:center; margin-bottom: 2rem;">
         <span class="cv-pill">Agentic fact-checking</span>
         <h1 class="cv-h1">Is it true, or is it<br><em>just a claim?</em></h1>
-        <p class="cv-sub">An AI agent that autonomously decomposes any claim into sub-questions, searches the web for evidence, and returns a structured verdict with citations.</p>
+        <p class="cv-sub">A multi-agent system that decomposes any claim, researches it with a ReAct agent, stores evidence in a vector database, and returns a cited verdict.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -149,16 +151,16 @@ if st.session_state.view == "landing":
         <div class="cv-step">
             <div class="cv-step-num">01</div>
             <div class="cv-step-icon">🔀</div>
-            <div class="cv-step-title">Decompose</div>
-            <div class="cv-step-desc">Agent breaks your claim into 3–5 targeted sub-questions using an LLM.</div>
+            <div class="cv-step-title">Plan</div>
+            <div class="cv-step-desc">Planner agent breaks your claim into 3–5 targeted sub-questions.</div>
         </div>""", unsafe_allow_html=True)
     with s2:
         st.markdown("""
         <div class="cv-step">
             <div class="cv-step-num">02</div>
             <div class="cv-step-icon">🌐</div>
-            <div class="cv-step-title">Search</div>
-            <div class="cv-step-desc">Each sub-question is searched across the web pulling real-time sources.</div>
+            <div class="cv-step-title">Research</div>
+            <div class="cv-step-desc">ReAct research agent searches, reads pages and stores evidence in ChromaDB.</div>
         </div>""", unsafe_allow_html=True)
     with s3:
         st.markdown("""
@@ -166,7 +168,7 @@ if st.session_state.view == "landing":
             <div class="cv-step-num">03</div>
             <div class="cv-step-icon">⚖️</div>
             <div class="cv-step-title">Verdict</div>
-            <div class="cv-step-desc">Evidence is analysed and a structured verdict returned with citations.</div>
+            <div class="cv-step-desc">Verifier agent retrieves the best evidence and returns a cited verdict.</div>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("<div style='margin-top: 2rem;'></div>", unsafe_allow_html=True)
@@ -214,14 +216,14 @@ if st.session_state.view == "landing":
     with t3:
         st.markdown("""
         <div class="cv-tech-card">
-            <div class="cv-tech-icon">📊</div>
-            <div><div class="cv-tech-name">Streamlit</div><div class="cv-tech-role">Interface</div></div>
+            <div class="cv-tech-icon">🧠</div>
+            <div><div class="cv-tech-name">ChromaDB</div><div class="cv-tech-role">Evidence retrieval</div></div>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("""
     <div class="cv-footer">
         <span class="cv-footer-l">Shreya Sethi · MS Computer Science · USC 2026</span>
-        <span class="cv-footer-r">claim-verifier v0.1</span>
+        <span class="cv-footer-r">claim-verifier v0.2</span>
     </div>""", unsafe_allow_html=True)
 
 elif st.session_state.view == "results":
@@ -233,50 +235,35 @@ elif st.session_state.view == "results":
         st.session_state.chat_history = []
         st.rerun()
 
-    st.markdown(f"<h3 style='font-family: DM Serif Display, serif; margin-bottom: 1.5rem;'>Verifying: <em style='color:#534AB7'>{st.session_state.claim}</em></h3>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='font-family: DM Serif Display, serif; margin-bottom: 1.5rem;'>Verifying: <em style='color:#534AB7'>{html.escape(st.session_state.claim)}</em></h3>", unsafe_allow_html=True)
 
     if st.session_state.result is None:
-        progress_container = st.empty()
+        from src.agent import run_pipeline
 
+        progress_container = st.empty()
         with progress_container.container():
             st.markdown("#### Researching your claim...")
-            step1 = st.status("🔀 Decomposing claim into sub-questions...", expanded=False)
-            step2 = st.status("🌐 Searching the web for evidence...", expanded=False)
-            step3 = st.status("⚖️ Analysing evidence and generating verdict...", expanded=False)
+            s_plan = st.status("🧭 Planner agent: breaking the claim into sub-questions...", expanded=False)
+            s_research = st.status("🔎 Research agent (ReAct): searching, reading, storing evidence...", expanded=True)
+            s_verify = st.status("⚖️ Verifier agent: weighing cited evidence...", expanded=False)
 
-        # Step 1
-        step1.update(state="running")
-        from src.agent import decompose_claim
-        from src.search import search_web
-        from src.verdict import generate_verdict
+        def on_stage(name):
+            if name == "research":
+                s_plan.update(label="🧭 Sub-questions ready", state="complete")
+            elif name == "verify":
+                s_research.update(label="🔎 Research complete", state="complete", expanded=False)
 
-        sub_questions = decompose_claim(st.session_state.claim)
-        step1.update(label=f"🔀 Decomposed into {len(sub_questions)} sub-questions", state="complete")
+        def on_step(entry):
+            arg = next(iter(entry["args"].values()), "") if entry["args"] else ""
+            s_research.write(f"**Step {entry['step']}** · `{entry['action']}` {arg}")
 
-        # Step 2
-        step2.update(state="running")
-        all_evidence = []
-        for q in sub_questions:
-            results = search_web(q, max_results=5)
-            all_evidence.extend(results)
-        step2.update(label=f"🌐 Found {len(all_evidence)} pieces of evidence", state="complete")
-
-        # Step 3
-        step3.update(state="running")
-        verdict = generate_verdict(st.session_state.claim, all_evidence[:10])
-        step3.update(label="⚖️ Verdict generated", state="complete")
-
-        st.session_state.result = {
-            "claim": st.session_state.claim,
-            "sub_questions": sub_questions,
-            "evidence": all_evidence,
-            "verdict": verdict
-        }
-
+        st.session_state.result = run_pipeline(st.session_state.claim, on_stage=on_stage, on_step=on_step)
+        s_verify.update(label="⚖️ Verdict generated", state="complete")
         progress_container.empty()
 
     result = st.session_state.result
     verdict = result["verdict"]
+    sources = result.get("sources", {})
     status = verdict.get("verdict", "ERROR")
     confidence = verdict.get("confidence", "")
     summary = verdict.get("summary", "")
@@ -294,28 +281,44 @@ elif st.session_state.view == "results":
 
     st.info(summary)
 
+    def render_point(p):
+        links = " ".join(
+            f"[{sid}]({sources[sid]['url']})" if sid in sources else sid for sid in p.get("sources", [])
+        )
+        st.markdown(f"- {p.get('point', '')} {links}")
+
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**✅ Supporting points**")
         for p in supporting:
-            st.markdown(f"- {p}")
+            render_point(p)
     with c2:
         st.markdown("**❌ Contradicting points**")
         for p in contradicting:
-            st.markdown(f"- {p}")
+            render_point(p)
+
+    if verdict.get("citation_issues"):
+        with st.expander("🛡️ Guardrail checks"):
+            for issue in verdict["citation_issues"]:
+                st.markdown(f"- {issue}")
 
     with st.expander("Sub-questions researched"):
         for i, q in enumerate(result["sub_questions"], 1):
             st.markdown(f"{i}. {q}")
 
+    with st.expander("Agent trace (ReAct steps)"):
+        for e in result.get("trace", []):
+            st.markdown(f"**Step {e['step']} · {e['action']}** `{e['args']}`")
+            if e.get("thought"):
+                st.caption(f"Thought: {e['thought'][:300]}")
+            if e.get("observation"):
+                st.code(e["observation"][:400], language=None)
+
     with st.expander("Sources"):
-        from src.credibility import score_evidence
-        scored = score_evidence(result["evidence"])
-        for e in scored:
-            cred = e.get("credibility", {})
-            color = cred.get("color", "⚪")
-            label = cred.get("label", "Unknown")
-            st.markdown(f"{color} [{e['title']}]({e['url']}) — *{label}*")
+        order = {"HIGH": 0, "MEDIUM": 1, "UNKNOWN": 2, "LOW": 3}
+        for sid, s in sorted(sources.items(), key=lambda kv: order[kv[1]["credibility"]["tier"]]):
+            cred = s["credibility"]
+            st.markdown(f"{cred['color']} **{sid}** [{s['title'] or s['url']}]({s['url']}) — *{cred['label']}*")
 
     st.markdown("---")
     st.markdown("### 💬 Discuss this verdict")
@@ -359,8 +362,8 @@ on the claim: "{st.session_state.claim}"
 Verdict: {verdict.get('verdict')}
 Confidence: {verdict.get('confidence')}
 Summary: {verdict.get('summary')}
-Supporting points: {verdict.get('supporting_points')}
-Contradicting points: {verdict.get('contradicting_points')}
+Supporting points: {[p['point'] for p in verdict.get('supporting_points', [])]}
+Contradicting points: {[p['point'] for p in verdict.get('contradicting_points', [])]}
 
 The user wants to discuss, challenge, or explore this verdict further.
 Be helpful, specific, and reference the evidence where possible.
@@ -371,8 +374,9 @@ Keep responses concise — 3-5 sentences max unless more detail is needed.
                 for h in st.session_state.chat_history:
                     messages.append({"role": h["role"], "content": h["content"]})
 
+                from src.llm import FAST_MODEL
                 response = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model=FAST_MODEL,
                     messages=messages,
                     max_tokens=500
                 )
@@ -384,6 +388,6 @@ Keep responses concise — 3-5 sentences max unless more detail is needed.
 
     st.markdown("""
     <div class="cv-footer">
-        <span class="cv-footer-l">Built with Groq · DuckDuckGo · Streamlit</span>
-        <span class="cv-footer-r">claim-verifier v0.1</span>
+        <span class="cv-footer-l">Built with Groq · DuckDuckGo · ChromaDB · Streamlit</span>
+        <span class="cv-footer-r">claim-verifier v0.2</span>
     </div>""", unsafe_allow_html=True)

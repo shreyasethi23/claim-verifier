@@ -1,0 +1,14 @@
+[
+  {"claim": "Vaccines cause autism", "expected": "REFUTED"},
+  {"claim": "Climate change is fake news", "expected": "REFUTED"},
+  {"claim": "The Great Wall of China is visible from space with the naked eye", "expected": "REFUTED"},
+  {"claim": "Humans only use 10% of their brains", "expected": "REFUTED"},
+  {"claim": "Transformers outperform RNNs on all NLP tasks", "expected": "REFUTED"},
+  {"claim": "Water boils at 100 degrees Celsius at sea level", "expected": "SUPPORTED"},
+  {"claim": "The Earth orbits the Sun", "expected": "SUPPORTED"},
+  {"claim": "Regular exercise reduces the risk of cardiovascular disease", "expected": "SUPPORTED"},
+  {"claim": "Smoking increases the risk of lung cancer", "expected": "SUPPORTED"},
+  {"claim": "Python was first released in 1991", "expected": "SUPPORTED"},
+  {"claim": "AGI will be achieved by 2027", "expected": "INSUFFICIENT EVIDENCE"},
+  {"claim": "A startup founded last week will be the most valuable company in 2040", "expected": "INSUFFICIENT EVIDENCE"}
+]
