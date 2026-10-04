@@ -3,3 +3,5 @@ ddgs
 chromadb
 streamlit
 python-dotenv
+requests
+beautifulsoup4
